@@ -1,0 +1,70 @@
+from pathlib import Path
+from pypdf import PdfReader, PdfWriter
+import fitz
+import pytesseract
+from PIL import Image
+import io
+import re
+
+
+INPUT_FOLDER = Path("input")
+OUTPUT_FOLDER = Path("output")
+OUTPUT_FOLDER.mkdir(exist_ok=True)
+
+
+# Продолжаем нумерацию существующих файлов
+numbers = [
+    int(m.group(1))
+    for f in OUTPUT_FOLDER.glob("page_*.pdf")
+    if (m := re.match(r"page_(\d+)\.pdf$", f.name))
+]
+
+page_number = max(numbers, default=0) + 1
+
+
+for pdf_file in sorted(INPUT_FOLDER.glob("*.pdf")):
+
+    reader = PdfReader(pdf_file)
+    doc = fitz.open(pdf_file)
+
+    print(f"\nОбработка: {pdf_file.name}")
+
+    for i, page in enumerate(reader.pages):
+
+        # Превращаем страницу во временную картинку
+        pix = doc[i].get_pixmap(matrix=fitz.Matrix(2, 2))
+        image = Image.open(io.BytesIO(pix.tobytes("png")))
+
+        # Определяем ориентацию текста
+        try:
+            osd = pytesseract.image_to_osd(image)
+
+            rotate = int(
+                re.search(r"Rotate: (\d+)", osd).group(1)
+            )
+
+        except Exception:
+            rotate = 0
+            print(f"Не удалось определить ориентацию страницы {i + 1}")
+
+        # Tesseract сам сообщает нужный корректирующий поворот
+        if rotate:
+            page.rotate(rotate)
+
+        writer = PdfWriter()
+        writer.add_page(page)
+
+        output_file = OUTPUT_FOLDER / f"page_{page_number:04d}.pdf"
+
+        with open(output_file, "wb") as f:
+            writer.write(f)
+
+        print(
+            f"{output_file.name}: "
+            f"поворот {rotate}°"
+        )
+
+        page_number += 1
+
+
+print("\nГотово.")
